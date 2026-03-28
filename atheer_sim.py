@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 from pathlib import Path
 from datetime import datetime
 
@@ -34,6 +34,7 @@ class ScenarioConfig:
     # Offline local processing (e.g., NFC tap)
     local_time_s: float = 0.05    # 50ms
 
+
     # Degradation (applies only if enabled)
     enable_degradation: bool = False
     degrade_threshold_tps: float = 10.0
@@ -41,8 +42,14 @@ class ScenarioConfig:
     degrade_loss_alpha: float = 1.50
     degrade_max_loss: float = 0.30
 
+    # Switch micro-latency (set below per scenario)
+    switch_redis_mean: float = 0.002
+    switch_redis_std: float = 0.0005
+    switch_mongo_mean: float = 0.005
+    switch_mongo_std: float = 0.001
 
-# Two main scenarios only (Priority removed)
+
+ # Two main scenarios: S1 (Public Internet), S2 (Private APN). No legacy priority logic remains.
 SCENARIOS = [
     ScenarioConfig(
         key="S1_PUBLIC",
@@ -59,6 +66,10 @@ SCENARIOS = [
         degrade_latency_alpha=0.75,
         degrade_loss_alpha=1.25,
         degrade_max_loss=0.35,
+        switch_redis_mean=0.002,
+        switch_redis_std=0.0005,
+        switch_mongo_mean=0.005,
+        switch_mongo_std=0.001,
     ),
     ScenarioConfig(
         key="S2_PRIVATE",
@@ -71,6 +82,10 @@ SCENARIOS = [
         e2e_timeout_s=5.0,
         bank_capacity=12,      # SAME as S1 to isolate network effect
         enable_degradation=False,
+        switch_redis_mean=0.002,
+        switch_redis_std=0.0005,
+        switch_mongo_mean=0.005,
+        switch_mongo_std=0.001,
     ),
 ]
 
@@ -106,9 +121,8 @@ def ci95(mean: float, std: float, n: int) -> Tuple[float, float]:
     half = 1.96 * (std / math.sqrt(n))
     return mean - half, mean + half
 
-
 # =========================
-# Simulation Core
+# Simulation Core (4-Layer E2E Model)
 # =========================
 
 class PaymentSystem:
@@ -119,7 +133,7 @@ class PaymentSystem:
         self.rng = rng
         self.bank = simpy.Resource(env, capacity=cfg.bank_capacity)
         # New: Switch resource (stateless, but can be used for future concurrency limits)
-        self.switch = simpy.Resource(env, capacity=cfg.switch_capacity if hasattr(cfg, 'switch_capacity') else 1000)
+        self.switch = simpy.Resource(env, capacity=1000)
         self.stats = []
 
     def effective_network_params(self) -> Tuple[float, float, float]:
@@ -465,7 +479,7 @@ def build_summary_tables(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
 # =========================
 
 if __name__ == "__main__":
-    print("Starting Atheer Simulation Evaluation (Improved, No-Priority)...")
+    print("Starting Atheer Simulation Evaluation (4-Layer E2E Model)...")
     results = run_simulation()
 
     if results.empty:
