@@ -118,6 +118,8 @@ class PaymentSystem:
         self.offered_tps = offered_tps
         self.rng = rng
         self.bank = simpy.Resource(env, capacity=cfg.bank_capacity)
+        # New: Switch resource (stateless, but can be used for future concurrency limits)
+        self.switch = simpy.Resource(env, capacity=cfg.switch_capacity if hasattr(cfg, 'switch_capacity') else 1000)
         self.stats = []
 
     def effective_network_params(self) -> Tuple[float, float, float]:
@@ -175,51 +177,60 @@ class PaymentSystem:
         start_time = self.env.now
         in_measure_window = (start_time >= WARMUP_S) and (start_time <= WARMUP_S + MEASURE_S)
 
-        # 1) Local
+        # 1) Edge Layer: Local Processing (NFC, HCE)
         yield self.env.timeout(self.cfg.local_time_s)
 
         # Early E2E
         if (self.env.now - start_time) > self.cfg.e2e_timeout_s:
             if in_measure_window:
-                self.record(tx_id, start_time, "FAILED", "FAILED_E2E_TIMEOUT", 0, 0, 0.0, 0.0)
+                self.record(tx_id, start_time, "FAILED", "FAILED_E2E_TIMEOUT", 0, 0, 0.0, 0.0, 0.0)
             return
 
-        # 2) Uplink
+        # 2) Network Layer: Uplink
         uplink = self.env.process(self.transmit_with_retries("UPLINK", start_time))
         uplink_ok, uplink_attempts, uplink_time, uplink_reason = yield uplink
 
         if not uplink_ok:
             if in_measure_window:
                 self.record(tx_id, start_time, "FAILED", uplink_reason or "FAILED_UPLINK_NETWORK",
-                            uplink_attempts, 0, 0.0, uplink_time)
+                            uplink_attempts, 0, 0.0, uplink_time, 0.0)
             return
 
-        # 3) Bank queue + service
-        if (self.env.now - start_time) > self.cfg.e2e_timeout_s:
-            if in_measure_window:
-                self.record(tx_id, start_time, "FAILED", "FAILED_E2E_TIMEOUT", uplink_attempts, 0, 0.0, uplink_time)
-            return
+        # 3) Processing Layer: Atheer Switch (Redis + MongoDB + Logic)
+        switch_overhead = 0.0
+        with self.switch.request() as switch_req:
+            yield switch_req
+            # Redis idempotency check
+            redis_lat = float(self.rng.normal(self.cfg.switch_redis_mean, self.cfg.switch_redis_std))
+            redis_lat = max(0.0001, redis_lat)
+            yield self.env.timeout(redis_lat)
+            # Bank queue + service
+            if (self.env.now - start_time) > self.cfg.e2e_timeout_s:
+                if in_measure_window:
+                    self.record(tx_id, start_time, "FAILED", "FAILED_E2E_TIMEOUT", uplink_attempts, 0, 0.0, uplink_time, switch_overhead)
+                return
+            req = self.bank.request()
+            q_start = self.env.now
+            results = yield req | self.env.timeout(self.cfg.queue_timeout_s)
+            if req not in results:
+                try:
+                    req.cancel()
+                except Exception:
+                    pass
+                if in_measure_window:
+                    self.record(tx_id, start_time, "FAILED", "FAILED_QUEUE_TIMEOUT",
+                                uplink_attempts, 0, self.env.now - q_start, uplink_time, switch_overhead)
+                return
+            queue_wait = self.env.now - q_start
+            yield self.env.timeout(self.cfg.service_time_s)
+            self.bank.release(req)
+            # MongoDB token burn
+            mongo_lat = float(self.rng.normal(self.cfg.switch_mongo_mean, self.cfg.switch_mongo_std))
+            mongo_lat = max(0.0001, mongo_lat)
+            yield self.env.timeout(mongo_lat)
+            switch_overhead = redis_lat + mongo_lat
 
-        req = self.bank.request()
-        q_start = self.env.now
-        results = yield req | self.env.timeout(self.cfg.queue_timeout_s)
-
-        if req not in results:
-            try:
-                req.cancel()
-            except Exception:
-                pass
-
-            if in_measure_window:
-                self.record(tx_id, start_time, "FAILED", "FAILED_QUEUE_TIMEOUT",
-                            uplink_attempts, 0, self.env.now - q_start, uplink_time)
-            return
-
-        queue_wait = self.env.now - q_start
-        yield self.env.timeout(self.cfg.service_time_s)
-        self.bank.release(req)
-
-        # 4) Downlink
+        # 4) Network Layer: Downlink
         downlink = self.env.process(self.transmit_with_retries("DOWNLINK", start_time))
         downlink_ok, downlink_attempts, downlink_time, downlink_reason = yield downlink
 
@@ -228,22 +239,22 @@ class PaymentSystem:
         if not downlink_ok:
             if in_measure_window:
                 self.record(tx_id, start_time, "FAILED", downlink_reason or "FAILED_DOWNLINK_NETWORK",
-                            uplink_attempts, downlink_attempts, queue_wait, net_time)
+                            uplink_attempts, downlink_attempts, queue_wait, net_time, switch_overhead)
             return
 
         total_duration = self.env.now - start_time
         if total_duration > self.cfg.e2e_timeout_s:
             if in_measure_window:
                 self.record(tx_id, start_time, "FAILED", "FAILED_E2E_TIMEOUT",
-                            uplink_attempts, downlink_attempts, queue_wait, net_time)
+                            uplink_attempts, downlink_attempts, queue_wait, net_time, switch_overhead)
             return
 
         if in_measure_window:
             self.record(tx_id, start_time, "SUCCESS", "NONE",
-                        uplink_attempts, downlink_attempts, queue_wait, net_time)
+                        uplink_attempts, downlink_attempts, queue_wait, net_time, switch_overhead)
 
     def record(self, tx_id: int, start_time: float, status: str, reason: str,
-               uplink_attempts: int, downlink_attempts: int, queue_wait_s: float, net_time_s: float):
+               uplink_attempts: int, downlink_attempts: int, queue_wait_s: float, net_time_s: float, switch_overhead_s: float):
         end_time = self.env.now
         self.stats.append({
             "tx_id": tx_id,
@@ -256,6 +267,7 @@ class PaymentSystem:
             "downlink_attempts": downlink_attempts,
             "queue_wait_s": queue_wait_s,
             "net_time_s": net_time_s,
+            "switch_overhead_s": switch_overhead_s,
             "bank_service_s": self.cfg.service_time_s,
             "local_time_s": self.cfg.local_time_s,
         })
