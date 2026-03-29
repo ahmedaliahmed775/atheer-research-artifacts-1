@@ -11,10 +11,10 @@ Update this document if you change the model.
 	2. **Network Layer (Transport):** Uplink/Downlink via S1 (Public Internet) or S2 (Private APN), with packet loss and latency.
 	3. **Processing Layer (Atheer Switch):** Stateless Node.js middleware with:
 		 - *Idempotency Check* (Redis micro-latency)
-		 - *Token Burn* (MongoDB micro-latency)
+		 - *Transaction Storage* (PostgreSQL micro-latency)
 		 - Centralized filter to prevent double-spending.
 	4. **Integration Layer (Core Bank):** Bank processing via API adapters (queue + service).
-- **Switch Overhead:** Sum of Redis and MongoDB micro-latencies, measured per transaction.
+- **Switch Overhead:** Sum of Redis and PostgreSQL micro-latencies, measured per transaction.
 - **E2E timeout:** fail if total latency exceeds configured threshold.
 - **Success Rate:** Includes transactions dropped due to network or E2E timeouts.
 - **Reproducibility:** All random seeds fixed for academic reproducibility.

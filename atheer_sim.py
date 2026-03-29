@@ -45,8 +45,8 @@ class ScenarioConfig:
     # Switch micro-latency (set below per scenario)
     switch_redis_mean: float = 0.002
     switch_redis_std: float = 0.0005
-    switch_mongo_mean: float = 0.005
-    switch_mongo_std: float = 0.001
+    switch_postgres_mean: float = 0.005
+    switch_postgres_std: float = 0.001
 
 
  # Two main scenarios: S1 (Public Internet), S2 (Private APN). No legacy priority logic remains.
@@ -68,8 +68,8 @@ SCENARIOS = [
         degrade_max_loss=0.35,
         switch_redis_mean=0.002,
         switch_redis_std=0.0005,
-        switch_mongo_mean=0.005,
-        switch_mongo_std=0.001,
+        switch_postgres_mean=0.005,
+        switch_postgres_std=0.001,
     ),
     ScenarioConfig(
         key="S2_PRIVATE",
@@ -84,8 +84,8 @@ SCENARIOS = [
         enable_degradation=False,
         switch_redis_mean=0.002,
         switch_redis_std=0.0005,
-        switch_mongo_mean=0.005,
-        switch_mongo_std=0.001,
+        switch_postgres_mean=0.005,
+        switch_postgres_std=0.001,
     ),
 ]
 
@@ -210,7 +210,7 @@ class PaymentSystem:
                             uplink_attempts, 0, 0.0, uplink_time, 0.0)
             return
 
-        # 3) Processing Layer: Atheer Switch (Redis + MongoDB + Logic)
+        # 3) Processing Layer: Atheer Switch (Redis + PostgreSQL + Logic)
         switch_overhead = 0.0
         with self.switch.request() as switch_req:
             yield switch_req
@@ -238,11 +238,11 @@ class PaymentSystem:
             queue_wait = self.env.now - q_start
             yield self.env.timeout(self.cfg.service_time_s)
             self.bank.release(req)
-            # MongoDB token burn
-            mongo_lat = float(self.rng.normal(self.cfg.switch_mongo_mean, self.cfg.switch_mongo_std))
-            mongo_lat = max(0.0001, mongo_lat)
-            yield self.env.timeout(mongo_lat)
-            switch_overhead = redis_lat + mongo_lat
+            # PostgreSQL transaction storage
+            postgres_lat = float(self.rng.normal(self.cfg.switch_postgres_mean, self.cfg.switch_postgres_std))
+            postgres_lat = max(0.0001, postgres_lat)
+            yield self.env.timeout(postgres_lat)
+            switch_overhead = redis_lat + postgres_lat
 
         # 4) Network Layer: Downlink
         downlink = self.env.process(self.transmit_with_retries("DOWNLINK", start_time))

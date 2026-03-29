@@ -8,7 +8,7 @@ This repository enables researchers and developers to reproduce and confirm the 
 
 1. **Edge Layer (SDK):** Local NFC tap and HCE cryptogram generation.
 2. **Network Layer (Transport):** Uplink/Downlink via S1 (Public Internet) or S2 (Private APN), with packet loss and latency.
-3. **Processing Layer (Atheer Switch):** Stateless Node.js middleware with Redis (idempotency) and MongoDB (token burn) micro-latencies.
+3. **Processing Layer (Atheer Switch):** Stateless Node.js middleware with Redis (idempotency) and PostgreSQL (transaction storage) micro-latencies.
 4. **Integration Layer (Core Bank):** Bank processing via API adapters.
 
 ## 📄 Reproducible Results
@@ -99,7 +99,7 @@ Running `python atheer_sim.py` will create an `outputs/` folder and write timest
     * `outputs/failure_breakdown_YYYYMMDD_HHMMSS.csv`
 
 **Key Performance Indicators (KPIs):**
-- **Switch Overhead:** Total time spent inside the Atheer Switch (Redis + MongoDB + Logic). Must prove it's < 20ms.
+- **Switch Overhead:** Total time spent inside the Atheer Switch (Redis + PostgreSQL + Logic). Must prove it's < 20ms.
 - **End-to-End Latency:** Total time from NFC tap to Merchant Screen response.
 - **Success Rate under Load:** Including transactions dropped due to network timeouts vs. successfully processed E2E.
 

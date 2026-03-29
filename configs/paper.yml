@@ -36,8 +36,8 @@ scenarios:
     switch:
       redis_mean_s: 0.002
       redis_std_s: 0.0005
-      mongo_mean_s: 0.005
-      mongo_std_s: 0.001
+      postgres_mean_s: 0.005
+      postgres_std_s: 0.001
 
   - key: "S2_PRIVATE"
     name: "S2: Private APN (Atheer) [Network-only]"
@@ -54,5 +54,5 @@ scenarios:
     switch:
       redis_mean_s: 0.002
       redis_std_s: 0.0005
-      mongo_mean_s: 0.005
-      mongo_std_s: 0.001
+      postgres_mean_s: 0.005
+      postgres_std_s: 0.001
