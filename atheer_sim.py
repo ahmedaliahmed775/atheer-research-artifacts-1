@@ -3,10 +3,22 @@ import math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+plt.rcParams.update({
+    'font.size': 14,
+    'axes.labelsize': 16,
+    'axes.titlesize': 18,
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+    'figure.titlesize': 20
+})
+
 from dataclasses import dataclass
 from typing import Tuple
 from pathlib import Path
 from datetime import datetime
+import yaml
 
 # =========================
 # CONFIGURATION (seconds)
@@ -49,52 +61,45 @@ class ScenarioConfig:
     switch_postgres_std: float = 0.001
 
 
- # Two main scenarios: S1 (Public Internet), S2 (Private APN). No legacy priority logic remains.
-SCENARIOS = [
-    ScenarioConfig(
-        key="S1_PUBLIC",
-        name="S1: Public Internet",
-        latency_mean_s=0.400,  # 400ms
-        latency_std_s=0.200,   # 200ms jitter
-        packet_loss=0.10,      # 10%
-        retries=2,
-        queue_timeout_s=12.0,
-        e2e_timeout_s=15.0,
-        bank_capacity=12,
-        enable_degradation=True,
-        degrade_threshold_tps=10.0,
-        degrade_latency_alpha=0.75,
-        degrade_loss_alpha=1.25,
-        degrade_max_loss=0.35,
-        switch_redis_mean=0.002,
-        switch_redis_std=0.0005,
-        switch_postgres_mean=0.005,
-        switch_postgres_std=0.001,
-    ),
-    ScenarioConfig(
-        key="S2_PRIVATE",
-        name="S2: Private APN (Atheer) [Network-APN]",
-        latency_mean_s=0.060,  # 60ms
-        latency_std_s=0.015,   # 15ms
-        packet_loss=0.001,     # 0.1%
-        retries=1,
-        queue_timeout_s=4.0,
-        e2e_timeout_s=5.0,
-        bank_capacity=12,      # SAME as S1 to isolate network effect
-        enable_degradation=False,
-        switch_redis_mean=0.002,
-        switch_redis_std=0.0005,
-        switch_postgres_mean=0.005,
-        switch_postgres_std=0.001,
-    ),
-]
+ # Load Configuration from YAML dynamically
+yaml_path = Path(__file__).resolve().parent / "configs" / "paper.yml"
+with open(yaml_path, "r", encoding="utf-8") as f:
+    config_data = yaml.safe_load(f)
 
-LOAD_POINTS_TPS = [1, 5, 10, 20, 30, 40, 50]
-WARMUP_S = 5.0
-MEASURE_S = 60.0
-NUM_RUNS = 5
+exp = config_data["experiment"]
+LOAD_POINTS_TPS = exp["load_points_tps"]
+WARMUP_S = float(exp["warmup_s"])
+MEASURE_S = float(exp["measure_s"])
+NUM_RUNS = int(exp["num_runs"])
+BASE_SEED = int(exp["base_seed"])
 
-BASE_SEED = 20260211  # keep fixed for reproducibility
+bank_cfg = config_data["bank"]
+
+SCENARIOS = []
+for s in config_data["scenarios"]:
+    scen = ScenarioConfig(
+        key=s["key"],
+        name=s["name"],
+        bank_capacity=int(bank_cfg["capacity"]),
+        service_time_s=float(bank_cfg["service_time_s"]),
+        local_time_s=float(bank_cfg["local_time_s"]),
+        latency_mean_s=float(s["network"]["latency_mean_s"]),
+        latency_std_s=float(s["network"]["latency_std_s"]),
+        packet_loss=float(s["network"]["packet_loss"]),
+        retries=int(s["network"]["retries"]),
+        queue_timeout_s=float(s["timeouts"]["queue_timeout_s"]),
+        e2e_timeout_s=float(s["timeouts"]["e2e_timeout_s"]),
+        enable_degradation=bool(s["degradation"]["enabled"]),
+        degrade_threshold_tps=float(s["degradation"].get("threshold_tps", 10.0)),
+        degrade_latency_alpha=float(s["degradation"].get("latency_alpha", 0.6)),
+        degrade_loss_alpha=float(s["degradation"].get("loss_alpha", 1.5)),
+        degrade_max_loss=float(s["degradation"].get("max_loss", 0.3)),
+        switch_redis_mean=float(s["switch"]["redis_mean_s"]),
+        switch_redis_std=float(s["switch"]["redis_std_s"]),
+        switch_postgres_mean=float(s["switch"]["postgres_mean_s"]),
+        switch_postgres_std=float(s["switch"]["postgres_std_s"])
+    )
+    SCENARIOS.append(scen)
 
 
 # =========================
@@ -395,6 +400,8 @@ def summarize_and_plot(df: pd.DataFrame, out_dir: Path, ts: str):
     plt.tight_layout()
     fig1 = out_dir / f"figure_success_rate_ci_{ts}.png"
     plt.savefig(fig1, dpi=200)
+    plt.savefig(out_dir / f"figure_success_rate_ci_{ts}.pdf", format="pdf", bbox_inches="tight")
+    plt.savefig(out_dir / f"figure_success_rate_ci_{ts}.svg", format="svg", bbox_inches="tight")
     plt.show()
 
     # ----- Figure: P95 Latency vs Load -----
@@ -414,6 +421,8 @@ def summarize_and_plot(df: pd.DataFrame, out_dir: Path, ts: str):
     plt.tight_layout()
     fig2 = out_dir / f"figure_p95_latency_ci_{ts}.png"
     plt.savefig(fig2, dpi=200)
+    plt.savefig(out_dir / f"figure_p95_latency_ci_{ts}.pdf", format="pdf", bbox_inches="tight")
+    plt.savefig(out_dir / f"figure_p95_latency_ci_{ts}.svg", format="svg", bbox_inches="tight")
     plt.show()
 
     # ----- Failure Breakdown at Max Load -----

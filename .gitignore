@@ -27,5 +27,12 @@ Thumbs.db
 .env
 *.key
 
-# Generated outputs (keep paper_artifacts if you want)
-outputs/
+# Output Artifacts (Uncomment if you want to push simulation results to Git)
+# outputs/
+
+# Temporary Drafts, Legacy Files & Tooling Scripts (Excluded from Git)
+_Private_Drafts_And_Tools/
+cleanup.py
+rename_inplace.py
+prepare_images.py
+tools/
